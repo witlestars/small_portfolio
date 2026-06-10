@@ -2,7 +2,7 @@
  * ============================================================
  *  IIOT 课程设计 — 车间智能通风与照明系统
  *  硬件: ESP32-S3 + BMP280(气压) + BH1750(光照) + HC-SR04(人员探测)
- *       + OLED SSD1306 + 继电器(排风扇通断) + 蜂鸣器 + 130电机
+ *       + OLED SSD1306 + 蜂鸣器 + 130电机(排风扇, L9110S直驱)
  *  通信: WiFi + MQTT 双向 (Mosquitto Broker)
  *  仪表盘: PC端 Python Flask + ECharts (iiot_dashboard.py)
  * ============================================================
@@ -28,7 +28,6 @@ const char* MQTT_CLIENT = "ESP32_Workshop";
 // 引脚定义
 #define TRIG_PIN     5    // HC-SR04 Trig
 #define ECHO_PIN     18   // HC-SR04 Echo
-#define RELAY_PIN    26   // 继电器 IN (LOW=触发/断电, HIGH=释放/通电)
 #define BUZZER_PIN   27   // 蜂鸣器 +
 #define MOTOR_INA    32   // L9110S INA (PWM)
 #define MOTOR_INB    33   // L9110S INB
@@ -41,7 +40,6 @@ const char* MQTT_CLIENT = "ESP32_Workshop";
 #define PRESSURE_DELTA_THRESH  3.0   // 气压骤变阈值 (hPa)
 #define LIGHT_THRESHOLD        50    // 光照阈值 (lux)
 #define DISTANCE_THRESHOLD     50    // 人员探测距离 (cm)
-#define PRESSURE_WINDOW_MS     15000 // 气压滑动窗口 (ms)
 
 // 常量
 #define SAMPLE_MS      1000
@@ -57,17 +55,25 @@ PubSubClient mqtt(espClient);
 
 // 状态
 unsigned long lastSample = 0;
-bool relayOn = true;       // true = 电机正常运行
-bool fanRunning = false;   // 排风扇是否在转
-float basePressure = 1013.0; // 基准气压
+bool fanRunning = false;
+float basePressure = 1013.0;
 unsigned long pressureCalibratedAt = 0;
 String systemStatus = "normal";
 bool personPresent = false;
 unsigned long personLastSeen = 0;
 
-// 气压滑动窗口 (简单版: 记录最近一次异常)
-float lastPressure = 0;
-unsigned long lastPressureTime = 0;
+// ===================== 电机控制 =====================
+void motorOn() {
+  analogWrite(MOTOR_INA, 180);  // PWM ~70%
+  digitalWrite(MOTOR_INB, LOW);
+  fanRunning = true;
+}
+
+void motorOff() {
+  analogWrite(MOTOR_INA, 0);
+  digitalWrite(MOTOR_INB, LOW);
+  fanRunning = false;
+}
 
 // ===================== WiFi =====================
 void connectWiFi() {
@@ -89,19 +95,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int len) {
   Serial.println("MQTT RX [" + String(topic) + "]: " + msg);
 
   if (String(topic) == "cmd/relay" || String(topic) == "cmd/fan") {
-    if (msg == "ON") {
-      relayOn = true;
-      digitalWrite(RELAY_PIN, HIGH);  // 释放继电器 = 电机通电
-      analogWrite(MOTOR_INA, 180);    // PWM 70%
-      digitalWrite(MOTOR_INB, LOW);
-      fanRunning = true;
-    } else if (msg == "OFF") {
-      relayOn = false;
-      digitalWrite(RELAY_PIN, LOW);   // 触发继电器 = 断电
-      analogWrite(MOTOR_INA, 0);
-      digitalWrite(MOTOR_INB, LOW);
-      fanRunning = false;
-    }
+    if (msg == "ON")  motorOn();
+    if (msg == "OFF") motorOff();
   }
 }
 
@@ -168,16 +163,12 @@ void setup() {
 
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
-  pinMode(RELAY_PIN, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(MOTOR_INA, OUTPUT);
   pinMode(MOTOR_INB, OUTPUT);
 
-  // 初始态: 继电器未触发(COM-NC通) = 电机有电但不转
-  digitalWrite(RELAY_PIN, HIGH);
   digitalWrite(BUZZER_PIN, LOW);
-  analogWrite(MOTOR_INA, 0);
-  digitalWrite(MOTOR_INB, LOW);
+  motorOff();
 
   Wire.begin(21, 22);
 
@@ -227,7 +218,7 @@ void loop() {
     lastSample = millis();
 
     // 采集
-    float pressure = bmp.readPressure() / 100.0;  // Pa → hPa
+    float pressure = bmp.readPressure() / 100.0;
     float lux = lightMeter.readLightLevel();
     float distance = readHCSR04();
 
@@ -236,57 +227,35 @@ void loop() {
 
     // --- 人员探测 ---
     bool personNow = (distance > 0 && distance < DISTANCE_THRESHOLD);
-    if (personNow) {
-      personLastSeen = millis();
-    }
-    // 保持"有人"状态至少 3 秒
-    if (millis() - personLastSeen < 3000) {
-      personPresent = true;
-    } else {
-      personPresent = false;
-    }
+    if (personNow) personLastSeen = millis();
+    personPresent = (millis() - personLastSeen < 3000);
 
     // --- 气压异常检测 ---
     float delta = abs(pressure - basePressure);
     if (delta > PRESSURE_DELTA_THRESH && !fanRunning) {
-      // 气压骤变 → 自动开排风扇
       systemStatus = "pressure";
-      relayOn = true;
-      digitalWrite(RELAY_PIN, HIGH);
-      analogWrite(MOTOR_INA, 180);
-      digitalWrite(MOTOR_INB, LOW);
-      fanRunning = true;
-      logEvent("气压异常 " + String(delta) + "hPa → 自动启动排风扇");
+      motorOn();
       Serial.printf("[PRESSURE] delta=%.1f hPa → fan ON\n", delta);
     } else if (delta <= PRESSURE_DELTA_THRESH && systemStatus == "pressure") {
-      // 气压恢复 → 自动关
       systemStatus = "normal";
-      analogWrite(MOTOR_INA, 0);
-      digitalWrite(MOTOR_INB, LOW);
-      fanRunning = false;
-      logEvent("气压恢复正常 → 排风扇关闭");
+      motorOff();
+      Serial.println("[PRESSURE] 恢复正常 → fan OFF");
     }
 
-    // --- 照明联动 (HC-SR04 + BH1750) ---
-    if (personPresent && lux < LIGHT_THRESHOLD) {
-      // 有人 + 光线不足 → 应开灯 (这里用蜂鸣器模拟开灯提示)
+    // --- 照明联动 ---
+    if (personPresent && lux < LIGHT_THRESHOLD && systemStatus == "normal") {
+      digitalWrite(BUZZER_PIN, HIGH); delay(200);
+      digitalWrite(BUZZER_PIN, LOW);
       Serial.println("[LIGHT] 有人+光线不足→需开灯");
-      if (systemStatus == "normal") {
-        // 短鸣一声提示
-        digitalWrite(BUZZER_PIN, HIGH);
-        delay(200);
-        digitalWrite(BUZZER_PIN, LOW);
-      }
     }
 
-    // 每 60 秒重新校准气压基准
+    // 慢速更新气压基准
     if (millis() - pressureCalibratedAt > 60000 && systemStatus == "normal") {
-      // 慢速更新基准值（滑动平均）
       basePressure = basePressure * 0.95 + pressure * 0.05;
       pressureCalibratedAt = millis();
     }
 
-    // JSON + MQTT 发布
+    // JSON + MQTT
     StaticJsonDocument<256> doc;
     doc["pressure"] = round(pressure * 10) / 10.0;
     doc["lux"]      = (int)lux;
@@ -298,21 +267,9 @@ void loop() {
     serializeJson(doc, json);
     mqtt.publish("sensor/data", json.c_str(), true);
 
-    // OLED
     updateOLED(pressure, lux, distance, personPresent);
-
-    // 串口
-    Serial.printf("P:%.1fhPa L:%d D:%dcm Person:%d Fan:%d Status:%s\n",
+    Serial.printf("P:%.1f L:%d D:%d Person:%d Fan:%d %s\n",
                   pressure, (int)lux, (int)distance,
                   personPresent, fanRunning, systemStatus.c_str());
   }
-}
-
-// ===================== 事件日志 =====================
-void logEvent(String msg) {
-  StaticJsonDocument<128> ev;
-  ev["event"] = msg;
-  String json;
-  serializeJson(ev, json);
-  mqtt.publish("sensor/event", json.c_str(), false);
 }

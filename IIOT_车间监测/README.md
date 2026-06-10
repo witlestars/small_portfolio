@@ -10,9 +10,8 @@
 - BH1750 光照传感器 x1 (I2C 0x23)
 - HC-SR04 超声波测距模块 x1 (人员探测)
 - OLED SSD1306 0.96寸 x1 (I2C 0x3C)
-- 2路5V继电器模块 x1 (低电平触发)
 - 有源蜂鸣器 3.3V x1
-- 130直流电机 + 桨叶 + L9110S驱动 x1 (排风扇)
+- 130直流电机 + 桨叶 + L9110S驱动 x1 (排风扇, 1-6V直驱)
 - 面包板 + 杜邦线若干
 
 ## 接线表
@@ -22,9 +21,9 @@
 | BH1750 | VCC,GND,SDA,SCL | 3.3V,GND,GPIO21,GPIO22 | I2C 0x23，与BMP280并接 |
 | OLED | VCC,GND,SDA,SCL | 3.3V,GND,GPIO21,GPIO22 | I2C 0x3C |
 | HC-SR04 | VCC,GND,Trig,Echo | 5V,GND,GPIO5,GPIO18 | |
-| 继电器 | VCC,GND,IN | 5V,GND,GPIO26 | COM-NC串入电机回路 |
 | 蜂鸣器 | +,- | GPIO27,GND | 有源 |
 | L9110S | VCC,GND,INA,INB | 5V,GND,GPIO32,GPIO33 | 驱动130电机 |
+| 130电机 | +/- | L9110S电机端子 | 1-6V, 桨叶当排风扇 |
 
 ### 接线示意图
 ```
@@ -44,18 +43,14 @@
          │                                   │
    D5 ───┼── HC-SR04 Trig                   │
    D18 ──┼── HC-SR04 Echo                   │
-   D26 ──┼── 继电器 IN (LOW=断电)           │
    D27 ──┼── 蜂鸣器 +                       │
    D32 ──┼── L9110S INA (PWM)               │
    D33 ──┼── L9110S INB                     │
          └──────────────────────────────────┘
-
-   电机回路: 5V → 继电器COM → 继电器NC → L9110S电机+ → 电机 → GND
 ```
 
 ## Arduino 库
-- Adafruit BMP280 Library
-- Adafruit Unified Sensor
+- Adafruit BMP280 Library + Adafruit Unified Sensor
 - BH1750 (Christopher Laws)
 - Adafruit GFX + Adafruit SSD1306
 - PubSubClient (Nick O'Leary)
@@ -72,12 +67,11 @@
 | 主题 | 方向 | 说明 |
 |------|------|------|
 | sensor/data | ESP32→PC | JSON: pressure,lux,distance,person,fan,status |
-| sensor/event | ESP32→PC | 事件通知 |
 | cmd/relay | PC→ESP32 | ON/OFF 控制排风扇 |
 
 ## 演示流程
 1. 系统启动，气压基准校准完成
-2. 用手遮盖 HC-SR04 (<50cm) → 大屏显示"有人" + 光照联动提示
-3. 模拟气压突变(吹气到BMP280或用代码模拟) → 排风扇自动启动
-4. PC 大屏发送 OFF → 排风扇停止
-5. 恢复正常 → 气压自动重新校准
+2. 用手靠近 HC-SR04 (<50cm) → 大屏显示"有人" + 照度不足时联动提示
+3. 模拟气压突变(吹气到BMP280) → 排风扇自动启动，大屏风扇动画转动
+4. PC 大屏点"停止"按钮 → 排风扇关闭
+5. 气压恢复正常 → 自动关风扇
