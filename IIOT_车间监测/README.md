@@ -11,7 +11,7 @@
 - HC-SR04 超声波测距模块 x1 (人员探测)
 - OLED SSD1306 0.96寸 x1 (I2C 0x3C)
 - 有源蜂鸣器 3.3V x1
-- 130直流电机 + 桨叶 + L9110S驱动 x1 (排风扇, 1-6V直驱)
+- 130直流电机 + 桨叶 + TB6612驱动 x1 (排风扇)
 - 面包板 + 杜邦线若干
 
 ## 接线表
@@ -22,8 +22,8 @@
 | OLED | VCC,GND,SDA,SCL | 3.3V,GND,GPIO21,GPIO22 | I2C 0x3C |
 | HC-SR04 | VCC,GND,Trig,Echo | 5V,GND,GPIO5,GPIO18 | |
 | 蜂鸣器 | +,- | GPIO27,GND | 有源 |
-| L9110S | VCC,GND,INA,INB | 5V,GND,GPIO32,GPIO33 | 驱动130电机 |
-| 130电机 | +/- | L9110S电机端子 | 1-6V, 桨叶当排风扇 |
+| TB6612 | VM,VCC,GND,AIN1,AIN2,PWMA,STBY | 5V,3.3V,GND,3.3V,GND,GPIO32,GPIO33 | 驱动130电机 |
+| 130电机 | +/- | TB6612 AO1/AO2 | 桨叶当排风扇 |
 
 ### 接线示意图
 ```
@@ -44,9 +44,11 @@
    D5 ───┼── HC-SR04 Trig                   │
    D18 ──┼── HC-SR04 Echo                   │
    D27 ──┼── 蜂鸣器 +                       │
-   D32 ──┼── L9110S INA (PWM)               │
-   D33 ──┼── L9110S INB                     │
+   D32 ──┼── TB6612 PWMA (PWM)              │
+   D33 ──┼── TB6612 STBY (使能)             │
          └──────────────────────────────────┘
+
+TB6612其它脚: AIN1→3.3V, AIN2→GND, VM→5V, VCC→3.3V, AO1/AO2→130电机
 ```
 
 ## Arduino 库

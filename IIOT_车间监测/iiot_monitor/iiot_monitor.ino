@@ -29,8 +29,8 @@ const char* MQTT_CLIENT = "ESP32_Workshop";
 #define TRIG_PIN     5    // HC-SR04 Trig
 #define ECHO_PIN     18   // HC-SR04 Echo
 #define BUZZER_PIN   27   // 蜂鸣器 +
-#define MOTOR_INA    32   // L9110S INA (PWM)
-#define MOTOR_INB    33   // L9110S INB
+#define MOTOR_PWM    32   // TB6612 PWMA (PWM调速)
+#define MOTOR_STBY   33   // TB6612 STBY (HIGH=运行)
 
 // I2C 地址
 #define OLED_ADDR    0x3C
@@ -64,14 +64,14 @@ unsigned long personLastSeen = 0;
 
 // ===================== 电机控制 =====================
 void motorOn() {
-  analogWrite(MOTOR_INA, 180);  // PWM ~70%
-  digitalWrite(MOTOR_INB, LOW);
+  digitalWrite(MOTOR_STBY, HIGH);
+  analogWrite(MOTOR_PWM, 180);  // PWM ~70%
   fanRunning = true;
 }
 
 void motorOff() {
-  analogWrite(MOTOR_INA, 0);
-  digitalWrite(MOTOR_INB, LOW);
+  digitalWrite(MOTOR_STBY, LOW);
+  analogWrite(MOTOR_PWM, 0);
   fanRunning = false;
 }
 
@@ -164,8 +164,8 @@ void setup() {
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
   pinMode(BUZZER_PIN, OUTPUT);
-  pinMode(MOTOR_INA, OUTPUT);
-  pinMode(MOTOR_INB, OUTPUT);
+  pinMode(MOTOR_PWM, OUTPUT);
+  pinMode(MOTOR_STBY, OUTPUT);
 
   digitalWrite(BUZZER_PIN, LOW);
   motorOff();
