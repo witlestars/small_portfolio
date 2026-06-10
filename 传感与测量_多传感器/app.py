@@ -7,10 +7,10 @@
 """
 
 from flask import Flask, jsonify, render_template_string, send_file
-import csv, os, glob
+import csv, os, glob, json
 
 app = Flask(__name__)
-CSV_PATH = os.path.expanduser("~/sensors_data.csv")
+JSON_PATH = os.path.expanduser("~/传感与测量_多传感器/sensor_data.json")
 EVENT_LOG = os.path.expanduser("~/event_log.txt")
 
 HTML = """<!DOCTYPE html>
@@ -111,24 +111,22 @@ def index():
 
 @app.route("/api/latest")
 def api_latest():
-    if not os.path.exists(CSV_PATH):
+    if not os.path.exists(JSON_PATH):
         return jsonify({})
-    with open(CSV_PATH) as f:
-        lines = f.readlines()
-    if len(lines) < 2:
+    try:
+        with open(JSON_PATH) as f:
+            d = json.load(f)
+        return jsonify({
+            "ts":   d.get("timestamp", ""),
+            "temp": d.get("temp"),
+            "humi": d.get("humi"),
+            "lux":  d.get("lux"),
+            "dist": d.get("distance"),
+            "pir":  d.get("pir", 0),
+            "led":  d.get("led", 0),
+        })
+    except Exception:
         return jsonify({})
-    cols = lines[-1].strip().split(",")
-    if len(cols) < 8:
-        return jsonify({})
-    return jsonify({
-        "ts":   cols[0],
-        "temp": float(cols[1]) if cols[1] else None,
-        "humi": float(cols[2]) if cols[2] else None,
-        "lux":  float(cols[3]) if cols[3] else None,
-        "dist": float(cols[4]) if cols[4] else None,
-        "pir":  int(cols[5]) if cols[5] else 0,
-        "led":  int(cols[6]) if cols[6] else 0,
-    })
 
 @app.route("/api/events")
 def api_events():

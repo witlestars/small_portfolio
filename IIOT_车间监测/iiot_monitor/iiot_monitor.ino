@@ -1,51 +1,55 @@
 /*
  * ============================================================
- *  IIOT 课程设计 — 基于MQTT的车间环境与设备状态监测系统
- *  硬件: ESP32-S3 + DHT22 + BH1750 + ACS712 + HC-SR04
- *       + OLED SSD1306 + 2路继电器 + 蜂鸣器 + 130直流电机
+ *  IIOT 课程设计 — 车间智能通风与照明系统
+ *  硬件: ESP32-S3 + BMP280(气压) + BH1750(光照) + HC-SR04(人员探测)
+ *       + OLED SSD1306 + 继电器(排风扇通断) + 蜂鸣器 + 130电机
  *  通信: WiFi + MQTT 双向 (Mosquitto Broker)
- *  仪表盘: PC端 Node-RED (http://localhost:1880/ui)
+ *  仪表盘: PC端 Python Flask + ECharts (iiot_dashboard.py)
  * ============================================================
  */
 
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
-#include <DHT.h>
 #include <BH1750.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <Adafruit_BMP280.h>
 
-// ===================== 配置区 (按实际情况修改) =====================
+// ===================== 配置区 =====================
 const char* WIFI_SSID   = "你的WiFi名";
 const char* WIFI_PASS   = "你的WiFi密码";
-const char* MQTT_BROKER = "192.168.1.100";  // 运行Mosquitto的PC IP地址
+const char* MQTT_BROKER = "192.168.1.100";  // PC IP
 const int   MQTT_PORT   = 1883;
-const char* MQTT_CLIENT = "ESP32_Monitor";
-// ==================================================================
+const char* MQTT_CLIENT = "ESP32_Workshop";
+// =================================================
 
 // 引脚定义
-#define DHTPIN       4    // DHT22 DATA
-#define ACS712_PIN   34   // ACS712 VOUT (ADC1_CH6)
 #define TRIG_PIN     5    // HC-SR04 Trig
 #define ECHO_PIN     18   // HC-SR04 Echo
-#define RELAY_PIN    26   // 继电器 IN
+#define RELAY_PIN    26   // 继电器 IN (LOW=触发/断电, HIGH=释放/通电)
 #define BUZZER_PIN   27   // 蜂鸣器 +
 #define MOTOR_INA    32   // L9110S INA (PWM)
 #define MOTOR_INB    33   // L9110S INB
 
+// I2C 地址
+#define OLED_ADDR    0x3C
+#define BMP280_ADDR  0x76
+
+// 阈值
+#define PRESSURE_DELTA_THRESH  3.0   // 气压骤变阈值 (hPa)
+#define LIGHT_THRESHOLD        50    // 光照阈值 (lux)
+#define DISTANCE_THRESHOLD     50    // 人员探测距离 (cm)
+#define PRESSURE_WINDOW_MS     15000 // 气压滑动窗口 (ms)
+
 // 常量
-#define DHTTYPE           DHT22
-#define OLED_ADDR         0x3C
-#define CURRENT_THRESHOLD 0.50   // 电流阈值 (A)，超过则报警
-#define ALERT_COUNT_MAX   3      // 连续超阈值次数才断电
-#define SAMPLE_MS         1000   // 采样间隔 (ms)
-#define OLED_W            128
-#define OLED_H            64
+#define SAMPLE_MS      1000
+#define OLED_W         128
+#define OLED_H         64
 
 // 对象
-DHT dht(DHTPIN, DHTTYPE);
+Adafruit_BMP280 bmp;
 BH1750 lightMeter(0x23);
 Adafruit_SSD1306 display(OLED_W, OLED_H, &Wire, -1);
 WiFiClient espClient;
@@ -53,22 +57,29 @@ PubSubClient mqtt(espClient);
 
 // 状态
 unsigned long lastSample = 0;
-int alertCount = 0;
-bool relayOn = true;
+bool relayOn = true;       // true = 电机正常运行
+bool fanRunning = false;   // 排风扇是否在转
+float basePressure = 1013.0; // 基准气压
+unsigned long pressureCalibratedAt = 0;
 String systemStatus = "normal";
+bool personPresent = false;
+unsigned long personLastSeen = 0;
+
+// 气压滑动窗口 (简单版: 记录最近一次异常)
+float lastPressure = 0;
+unsigned long lastPressureTime = 0;
 
 // ===================== WiFi =====================
 void connectWiFi() {
-  Serial.print("WiFi connecting");
+  Serial.print("WiFi...");
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   for (int i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++) {
     delay(500); Serial.print(".");
   }
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi OK, IP=" + WiFi.localIP().toString());
-  } else {
-    Serial.println("\nWiFi FAIL");
-  }
+  if (WiFi.status() == WL_CONNECTED)
+    Serial.println(" OK " + WiFi.localIP().toString());
+  else
+    Serial.println(" FAIL");
 }
 
 // ===================== MQTT =====================
@@ -77,13 +88,19 @@ void mqttCallback(char* topic, byte* payload, unsigned int len) {
   for (unsigned int i = 0; i < len; i++) msg += (char)payload[i];
   Serial.println("MQTT RX [" + String(topic) + "]: " + msg);
 
-  if (String(topic) == "cmd/relay") {
-    if (msg == "OFF") {
-      digitalWrite(RELAY_PIN, LOW); relayOn = false;
-      Serial.println("-> Relay OFF (motor stop)");
-    } else if (msg == "ON") {
-      digitalWrite(RELAY_PIN, HIGH); relayOn = true;
-      Serial.println("-> Relay ON (motor run)");
+  if (String(topic) == "cmd/relay" || String(topic) == "cmd/fan") {
+    if (msg == "ON") {
+      relayOn = true;
+      digitalWrite(RELAY_PIN, HIGH);  // 释放继电器 = 电机通电
+      analogWrite(MOTOR_INA, 180);    // PWM 70%
+      digitalWrite(MOTOR_INB, LOW);
+      fanRunning = true;
+    } else if (msg == "OFF") {
+      relayOn = false;
+      digitalWrite(RELAY_PIN, LOW);   // 触发继电器 = 断电
+      analogWrite(MOTOR_INA, 0);
+      digitalWrite(MOTOR_INB, LOW);
+      fanRunning = false;
     }
   }
 }
@@ -96,6 +113,7 @@ void connectMQTT() {
     if (mqtt.connect(MQTT_CLIENT)) {
       Serial.println("OK");
       mqtt.subscribe("cmd/relay");
+      mqtt.subscribe("cmd/fan");
     } else {
       Serial.print("fail("); Serial.print(mqtt.state()); Serial.print(") ");
       delay(2000);
@@ -103,54 +121,44 @@ void connectMQTT() {
   }
 }
 
-// ===================== 传感器读取 =====================
-float readACS712() {
-  // ACS712-5A: 185mV/A, 零点2.5V@5V供电
-  // ESP32 ADC: 12bit, 0-4095, 0-3.3V
-  float sum = 0;
-  for (int i = 0; i < 10; i++) {
-    sum += analogRead(ACS712_PIN);
-    delayMicroseconds(100);
-  }
-  float adc = sum / 10.0;
-  float voltage = adc * 3.3 / 4095.0;
-  float current = (voltage - 2.5) / 0.185;
-  return max(0.0f, current);
-}
-
+// ===================== 传感器 =====================
 float readHCSR04() {
   digitalWrite(TRIG_PIN, LOW); delayMicroseconds(2);
   digitalWrite(TRIG_PIN, HIGH); delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
   long duration = pulseIn(ECHO_PIN, HIGH, 30000);
-  if (duration == 0) return 400;  // 超时返回最大值
-  return duration * 0.034 / 2.0;  // cm
+  if (duration == 0) return 400;
+  return duration * 0.034 / 2.0;
 }
 
 // ===================== OLED =====================
-void updateOLED(float t, float h, float c) {
+void updateOLED(float p, float l, float d, bool person) {
   display.clearDisplay();
   display.setTextColor(WHITE);
-  display.setTextSize(2);
-  display.setCursor(0, 0);
-  display.printf("%.1fC %.0f%%", t, h);
-  display.setCursor(0, 20);
-  display.printf("%.2fA", c);
-  display.setCursor(0, 44);
+
   display.setTextSize(1);
-  display.print(systemStatus == "alert" ? "!! ALERT !!" :
-                (systemStatus == "warning" ? "WARNING" : "NORMAL"));
+  display.setCursor(0, 0);
+  display.printf("P:%.1fhPa L:%d", p, (int)l);
+
+  display.setCursor(0, 12);
+  display.printf("D:%.0fcm %s", d, person ? "有人" : "无人");
+
+  display.setCursor(0, 24);
+  display.printf("Fan:%s", fanRunning ? "ON " : "OFF");
+
+  display.setTextSize(2);
+  display.setCursor(0, 40);
+  display.print(systemStatus == "alert" ? "!!ALERT!!" :
+                (systemStatus == "pressure" ? "PRESSURE" : "NORMAL"));
   display.display();
 }
 
-// ===================== 报警 =====================
-void triggerAlert() {
-  digitalWrite(RELAY_PIN, LOW);
+// ===================== 告警 =====================
+void triggerAlert(const char* reason) {
   digitalWrite(BUZZER_PIN, HIGH);
-  relayOn = false;
   systemStatus = "alert";
-  Serial.println("\n!!! CURRENT SPIKE - RELAY CUT !!!\n");
-  delay(2000);
+  Serial.printf("\n!!! ALERT: %s !!!\n", reason);
+  delay(1500);
   digitalWrite(BUZZER_PIN, LOW);
 }
 
@@ -165,28 +173,48 @@ void setup() {
   pinMode(MOTOR_INA, OUTPUT);
   pinMode(MOTOR_INB, OUTPUT);
 
-  digitalWrite(RELAY_PIN, HIGH);   // 继电器不触发 = COM-NC通 = 电机有电
+  // 初始态: 继电器未触发(COM-NC通) = 电机有电但不转
+  digitalWrite(RELAY_PIN, HIGH);
   digitalWrite(BUZZER_PIN, LOW);
-  analogWrite(MOTOR_INA, 180);     // PWM ~70%, 电机启动
+  analogWrite(MOTOR_INA, 0);
   digitalWrite(MOTOR_INB, LOW);
 
   Wire.begin(21, 22);
-  dht.begin();
-  lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE);
 
-  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
-    Serial.println("OLED init failed");
+  // BMP280
+  if (bmp.begin(BMP280_ADDR)) {
+    bmp.setSampling(Adafruit_BMP280::MODE_FORCED,
+                    Adafruit_BMP280::SAMPLING_X1,
+                    Adafruit_BMP280::SAMPLING_X1,
+                    Adafruit_BMP280::FILTER_OFF);
+    basePressure = bmp.readPressure() / 100.0;
+    pressureCalibratedAt = millis();
+    Serial.printf("[BMP280] OK, base=%.1f hPa\n", basePressure);
+  } else {
+    Serial.println("[BMP280] FAIL");
   }
-  display.clearDisplay(); display.display();
+
+  // BH1750
+  if (lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE)) {
+    Serial.println("[BH1750] OK");
+  } else {
+    Serial.println("[BH1750] FAIL");
+  }
+
+  // OLED
+  if (display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+    display.clearDisplay(); display.display();
+    Serial.println("[OLED] OK");
+  } else {
+    Serial.println("[OLED] FAIL");
+  }
 
   connectWiFi();
   connectMQTT();
 
-  Serial.println("\n========== IIOT Monitor Ready ==========");
-  Serial.println("MQTT Topics:");
-  Serial.println("  Publish: sensor/data  (JSON)");
-  Serial.println("  Subscribe: cmd/relay  (ON/OFF)");
-  Serial.println("=========================================\n");
+  Serial.println("\n===== IIOT 车间智能通风与照明 =====");
+  Serial.println("MQTT: sensor/data  ←  cmd/relay, cmd/fan");
+  Serial.println("====================================\n");
 }
 
 // ===================== LOOP =====================
@@ -199,46 +227,92 @@ void loop() {
     lastSample = millis();
 
     // 采集
-    float temp = dht.readTemperature();
-    float humi = dht.readHumidity();
-    float lux  = lightMeter.readLightLevel();
-    float current = readACS712();
+    float pressure = bmp.readPressure() / 100.0;  // Pa → hPa
+    float lux = lightMeter.readLightLevel();
     float distance = readHCSR04();
 
-    if (isnan(temp)) temp = 0;
-    if (isnan(humi)) humi = 0;
+    if (isnan(pressure)) pressure = basePressure;
     if (lux < 0) lux = 0;
 
-    // 报警判断
-    if (current > CURRENT_THRESHOLD) {
-      alertCount++;
-      systemStatus = (alertCount >= ALERT_COUNT_MAX) ? "alert" : "warning";
-    } else {
-      alertCount = 0;
-      systemStatus = "normal";
+    // --- 人员探测 ---
+    bool personNow = (distance > 0 && distance < DISTANCE_THRESHOLD);
+    if (personNow) {
+      personLastSeen = millis();
     }
-    if (alertCount >= ALERT_COUNT_MAX && relayOn) {
-      triggerAlert();
+    // 保持"有人"状态至少 3 秒
+    if (millis() - personLastSeen < 3000) {
+      personPresent = true;
+    } else {
+      personPresent = false;
     }
 
-    // JSON + MQTT发布
+    // --- 气压异常检测 ---
+    float delta = abs(pressure - basePressure);
+    if (delta > PRESSURE_DELTA_THRESH && !fanRunning) {
+      // 气压骤变 → 自动开排风扇
+      systemStatus = "pressure";
+      relayOn = true;
+      digitalWrite(RELAY_PIN, HIGH);
+      analogWrite(MOTOR_INA, 180);
+      digitalWrite(MOTOR_INB, LOW);
+      fanRunning = true;
+      logEvent("气压异常 " + String(delta) + "hPa → 自动启动排风扇");
+      Serial.printf("[PRESSURE] delta=%.1f hPa → fan ON\n", delta);
+    } else if (delta <= PRESSURE_DELTA_THRESH && systemStatus == "pressure") {
+      // 气压恢复 → 自动关
+      systemStatus = "normal";
+      analogWrite(MOTOR_INA, 0);
+      digitalWrite(MOTOR_INB, LOW);
+      fanRunning = false;
+      logEvent("气压恢复正常 → 排风扇关闭");
+    }
+
+    // --- 照明联动 (HC-SR04 + BH1750) ---
+    if (personPresent && lux < LIGHT_THRESHOLD) {
+      // 有人 + 光线不足 → 应开灯 (这里用蜂鸣器模拟开灯提示)
+      Serial.println("[LIGHT] 有人+光线不足→需开灯");
+      if (systemStatus == "normal") {
+        // 短鸣一声提示
+        digitalWrite(BUZZER_PIN, HIGH);
+        delay(200);
+        digitalWrite(BUZZER_PIN, LOW);
+      }
+    }
+
+    // 每 60 秒重新校准气压基准
+    if (millis() - pressureCalibratedAt > 60000 && systemStatus == "normal") {
+      // 慢速更新基准值（滑动平均）
+      basePressure = basePressure * 0.95 + pressure * 0.05;
+      pressureCalibratedAt = millis();
+    }
+
+    // JSON + MQTT 发布
     StaticJsonDocument<256> doc;
-    doc["temp"]     = round(temp * 10) / 10.0;
-    doc["humi"]     = round(humi * 10) / 10.0;
+    doc["pressure"] = round(pressure * 10) / 10.0;
     doc["lux"]      = (int)lux;
-    doc["current"]  = round(current * 1000) / 1000.0;
     doc["distance"] = (int)distance;
+    doc["person"]   = personPresent;
+    doc["fan"]      = fanRunning;
     doc["status"]   = systemStatus;
     String json;
     serializeJson(doc, json);
-    mqtt.publish("sensor/data", json.c_str(), true);  // retained
+    mqtt.publish("sensor/data", json.c_str(), true);
 
     // OLED
-    updateOLED(temp, humi, current);
+    updateOLED(pressure, lux, distance, personPresent);
 
-    // 串口调试
-    Serial.printf("T:%.1f H:%.1f L:%d I:%.3f D:%d S:%s\n",
-                  temp, humi, (int)lux, current, (int)distance,
-                  systemStatus.c_str());
+    // 串口
+    Serial.printf("P:%.1fhPa L:%d D:%dcm Person:%d Fan:%d Status:%s\n",
+                  pressure, (int)lux, (int)distance,
+                  personPresent, fanRunning, systemStatus.c_str());
   }
+}
+
+// ===================== 事件日志 =====================
+void logEvent(String msg) {
+  StaticJsonDocument<128> ev;
+  ev["event"] = msg;
+  String json;
+  serializeJson(ev, json);
+  mqtt.publish("sensor/event", json.c_str(), false);
 }
