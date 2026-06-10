@@ -14,26 +14,26 @@
 - 130直流电机 + 桨叶 + TB6612驱动 x1 (排风扇)
 - 面包板 + 杜邦线若干
 
-## 接线表
+## 接线表 (正点原子 DNESP32S3M)
 | 外设 | 外设脚 | ESP32-S3 | 备注 |
 |------|--------|----------|------|
-| BMP280 | VCC,GND,SDA,SCL | 3.3V,GND,GPIO21,GPIO22 | I2C 0x76 |
-| BH1750 | VCC,GND,SDA,SCL | 3.3V,GND,GPIO21,GPIO22 | I2C 0x23，与BMP280并接 |
-| OLED | VCC,GND,SDA,SCL | 3.3V,GND,GPIO21,GPIO22 | I2C 0x3C |
-| HC-SR04 | VCC,GND,Trig,Echo | 5V,GND,GPIO5,GPIO18 | |
-| 蜂鸣器 | +,- | GPIO27,GND | 有源 |
-| TB6612 | VM,VCC,GND,AIN1,AIN2,PWMA,STBY | 5V,3.3V,GND,3.3V,GND,GPIO32,GPIO33 | 驱动130电机 |
+| BMP280 | VCC,GND,SDA,SCL | 3.3V,GND,GPIO38,GPIO37 | I2C 0x76 (SDA=38,SCL=37) |
+| BH1750 | VCC,GND,SDA,SCL | 3.3V,GND,GPIO38,GPIO37 | I2C 0x23，与BMP280并接 |
+| OLED | VCC,GND,SDA,SCL | 3.3V,GND,GPIO38,GPIO37 | I2C 0x3C |
+| HC-SR04 | VCC,GND,Trig,Echo | 5V,GND,GPIO4,GPIO5 | |
+| 蜂鸣器 | +,- | GPIO6,GND | 有源 |
+| TB6612 | PWMA,STBY,AIN1,AIN2,VM,VCC,GND | GPIO7,GPIO15,3.3V,GND,5V,3.3V,GND | 驱动130电机 |
 | 130电机 | +/- | TB6612 AO1/AO2 | 桨叶当排风扇 |
 
-### 接线示意图
+### 接线示意图 (DNESP32S3M)
 ```
          ┌──────────────────────────┐
-         │       ESP32-S3           │
+         │    DNESP32S3M (正点原子)    │
          │                          │
    3.3V──┼─┬─BMP280_VCC            │
    GND ──┼─┼─BMP280_GND            │
-   D21 ──┼─┼─BMP280_SDA ──┬─BH1750_SDA ──┬─OLED_SDA
-   D22 ──┼─┼─BMP280_SCL ──┼─BH1750_SCL ──┼─OLED_SCL
+   D38 ──┼─┼─BMP280_SDA ──┬─BH1750_SDA ──┬─OLED_SDA
+   D37 ──┼─┼─BMP280_SCL ──┼─BH1750_SCL ──┼─OLED_SCL
          │ │               │               │
    3.3V──┼─┴─BH1750_VCC    │               │
    GND ──┼───BH1750_GND    │               │
@@ -41,11 +41,11 @@
    3.3V──┼──────────────────┴─OLED_VCC      │
    GND ──┼──────────────────OLED_GND        │
          │                                   │
-   D5 ───┼── HC-SR04 Trig                   │
-   D18 ──┼── HC-SR04 Echo                   │
-   D27 ──┼── 蜂鸣器 +                       │
-   D32 ──┼── TB6612 PWMA (PWM)              │
-   D33 ──┼── TB6612 STBY (使能)             │
+   D4 ───┼── HC-SR04 Trig                   │
+   D5 ───┼── HC-SR04 Echo                   │
+   D6 ───┼── 蜂鸣器 +                       │
+   D7 ───┼── TB6612 PWMA (PWM)              │
+   D15 ──┼── TB6612 STBY (使能)             │
          └──────────────────────────────────┘
 
 TB6612其它脚: AIN1→3.3V, AIN2→GND, VM→5V, VCC→3.3V, AO1/AO2→130电机

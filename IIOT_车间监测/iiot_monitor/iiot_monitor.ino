@@ -25,12 +25,12 @@ const int   MQTT_PORT   = 1883;
 const char* MQTT_CLIENT = "ESP32_Workshop";
 // =================================================
 
-// 引脚定义
-#define TRIG_PIN     5    // HC-SR04 Trig
-#define ECHO_PIN     18   // HC-SR04 Echo
-#define BUZZER_PIN   27   // 蜂鸣器 +
-#define MOTOR_PWM    32   // TB6612 PWMA (PWM调速)
-#define MOTOR_STBY   33   // TB6612 STBY (HIGH=运行)
+// 引脚定义 (DNESP32S3M 小系统板)
+#define TRIG_PIN     4    // HC-SR04 Trig
+#define ECHO_PIN     5    // HC-SR04 Echo
+#define BUZZER_PIN   6    // 蜂鸣器 +
+#define MOTOR_PWM    7    // TB6612 PWMA (PWM调速)
+#define MOTOR_STBY   15   // TB6612 STBY (HIGH=运行)
 
 // I2C 地址
 #define OLED_ADDR    0x3C
@@ -170,7 +170,7 @@ void setup() {
   digitalWrite(BUZZER_PIN, LOW);
   motorOff();
 
-  Wire.begin(21, 22);
+  Wire.begin(38, 37);  // DNESP32S3M: SDA=38, SCL=37
 
   // BMP280
   if (bmp.begin(BMP280_ADDR)) {
