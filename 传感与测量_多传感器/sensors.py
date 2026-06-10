@@ -274,7 +274,7 @@ HTML = """<!DOCTYPE html>
 body{font-family:'Microsoft YaHei',sans-serif;background:#0d1117;color:#c9d1d9;
 min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:15px}
 h1{color:#58a6ff;font-size:20px;margin-bottom:10px}
-.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;max-width:800px;width:100%;margin-bottom:15px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:700px;width:100%;margin-bottom:15px}
 .c{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:15px;text-align:center}
 .c .v{font-size:36px;font-weight:bold;color:#58a6ff}
 .c .l{font-size:12px;color:#8b949e;margin-top:4px}
@@ -288,10 +288,8 @@ h1{color:#58a6ff;font-size:20px;margin-bottom:10px}
 <h1>传感与测量 多传感器实时监测</h1>
 <div class="grid">
   <div class="c"><div class="v" id="t">--</div><div class="l">温度 °C</div></div>
-  <div class="c"><div class="v" id="h">--</div><div class="l">湿度 %</div></div>
   <div class="c"><div class="v" id="p">--</div><div class="l">气压 hPa</div></div>
   <div class="c"><div class="v" id="l">--</div><div class="l">光照 lux</div></div>
-  <div class="c"><div class="v" id="d">--</div><div class="l">距离 cm</div></div>
   <div class="c"><div class="v"><span class="status" id="pir_s"></span><span id="pir">--</span></div><div class="l">PIR 移动检测</div></div>
   <div class="c"><div class="v"><span class="status" id="led_s"></span><span id="led">--</span></div><div class="l">LED 状态</div></div>
 </div>
@@ -306,10 +304,8 @@ async function poll(){
   try{
     const d=await(await fetch('/api/data')).json();
     document.getElementById('t').textContent=d.temp!=null?d.temp:'--';
-    document.getElementById('h').textContent=d.humi!=null?d.humi:'--';
     document.getElementById('p').textContent=d.press!=null?d.press:'--';
     document.getElementById('l').textContent=d.lux!=null?d.lux:'--';
-    document.getElementById('d').textContent=d.dist!=null?d.dist:'--';
     document.getElementById('pir').textContent=d.pir?'有人':'无人';
     document.getElementById('pir_s').className='status '+(d.pir?'on':'off');
     document.getElementById('led').textContent=d.led?'亮':'灭';
