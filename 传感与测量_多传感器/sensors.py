@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 传感与测量 — 多传感器融合监测系统 (Flask Web 版)
-硬件: 树莓派5B + BME280 + BH1750 + HC-SR04 + PIR + LED + Pi Camera
+硬件: 树莓派5B + BMP280 + BH1750 + HC-SR04 + PIR + LED + Pi Camera
 """
 import time, csv, os, threading, lgpio
 from datetime import datetime
@@ -11,38 +11,29 @@ app = Flask(__name__)
 
 # ===================== 传感器驱动 =====================
 
-# --- BME280 温湿度+气压 (I2C) ---
-BME_OK = False
-BME280_ADDR = 0x76
-_bme_t_fine = 0
+# --- BMP280 温度+气压 (I2C) ---
+BMP_OK = False
+BMP280_ADDR = 0x76
+_bmp_t_fine = 0
 
-def read_bme280():
-    """读取 BME280, 返回 (temp_C, humi_%, press_hPa) 或 (None, None, None)"""
-    global _bme_t_fine
+def read_bmp280():
+    """读取 BMP280, 返回 (temp_C, press_hPa) 或 (None, None)"""
+    global _bmp_t_fine
     try:
-        # 强制模式: oversampling x1, 触发一次测量
-        _bus.write_byte_data(BME280_ADDR, 0xF2, 0x01)  # ctrl_hum
-        _bus.write_byte_data(BME280_ADDR, 0xF4, 0x25)  # ctrl_meas: T×1 P×1 forced
+        # 强制模式: T×1 P×1
+        _bus.write_byte_data(BMP280_ADDR, 0xF4, 0x25)
         time.sleep(0.05)
-        # 读原始数据 (8 字节: press[3] temp[3] hum[2])
-        raw = _bus.read_i2c_block_data(BME280_ADDR, 0xF7, 8)
+        # 读原始数据 (6 字节: press[3] temp[3])
+        raw = _bus.read_i2c_block_data(BMP280_ADDR, 0xF7, 6)
         p_raw = (raw[0] << 12) | (raw[1] << 4) | (raw[2] >> 4)
         t_raw = (raw[3] << 12) | (raw[4] << 4) | (raw[5] >> 4)
-        h_raw = (raw[6] << 8) | raw[7]
-        # 温度补偿 (BME280 datasheet section 4.2.3)
+        # 温度补偿
         v1 = (t_raw / 16384.0 - _dig_T1 / 1024.0) * _dig_T2
         v2 = ((t_raw / 131072.0 - _dig_T1 / 8192.0) ** 2) * _dig_T3
-        _bme_t_fine = v1 + v2
-        T = _bme_t_fine / 5120.0
-        # 湿度补偿
-        H = _bme_t_fine - 76800.0
-        H = (h_raw - (_dig_H4 * 64.0 + _dig_H5 / 16384.0 * H)) * (
-            _dig_H2 / 65536.0 * (1.0 + _dig_H6 / 67108864.0 * H * (
-                1.0 + _dig_H3 / 67108864.0 * H)))
-        H = H * (1.0 - _dig_H1 * H / 524288.0)
-        H = max(0, min(100, H))
+        _bmp_t_fine = v1 + v2
+        T = _bmp_t_fine / 5120.0
         # 气压补偿
-        v1 = _bme_t_fine / 2.0 - 64000.0
+        v1 = _bmp_t_fine / 2.0 - 64000.0
         v2 = v1 * v1 * _dig_P6 / 32768.0
         v2 = v2 + v1 * _dig_P5 * 2.0
         v2 = v2 / 4.0 + _dig_P4 * 65536.0
@@ -54,16 +45,16 @@ def read_bme280():
         v2 = P * _dig_P8 / 32768.0
         P = P + (v1 + v2 + _dig_P7) / 16.0
         P = P / 100.0  # Pa -> hPa
-        return round(T, 1), round(H, 1), round(P, 1)
+        return round(T, 1), round(P, 1)
     except:
-        return None, None, None
+        return None, None
 
-# 初始化 BME280
+# 初始化 BMP280
 try:
     import smbus2
     _bus = smbus2.SMBus(1)
-    # 读取校准数据
-    cal = _bus.read_i2c_block_data(BME280_ADDR, 0x88, 24)  # T1-T3 P1-P9
+    # 读取校准数据 (T1-T3 P1-P9, 共24字节)
+    cal = _bus.read_i2c_block_data(BMP280_ADDR, 0x88, 24)
     _dig_T1 = (cal[1] << 8) | cal[0]
     _dig_T2 = (cal[3] << 8) | cal[2] if cal[3] < 128 else ((cal[3] << 8) | cal[2]) - 65536
     _dig_T3 = (cal[5] << 8) | cal[4] if cal[5] < 128 else ((cal[5] << 8) | cal[4]) - 65536
@@ -76,22 +67,14 @@ try:
     _dig_P7 = (cal[19] << 8) | cal[18] if cal[19] < 128 else ((cal[19] << 8) | cal[18]) - 65536
     _dig_P8 = (cal[21] << 8) | cal[20] if cal[21] < 128 else ((cal[21] << 8) | cal[20]) - 65536
     _dig_P9 = (cal[23] << 8) | cal[22] if cal[23] < 128 else ((cal[23] << 8) | cal[22]) - 65536
-    cal_h = _bus.read_i2c_block_data(BME280_ADDR, 0xA1, 1)
-    _dig_H1 = cal_h[0]
-    cal_h2 = _bus.read_i2c_block_data(BME280_ADDR, 0xE1, 7)
-    _dig_H2 = (cal_h2[1] << 8) | cal_h2[0] if cal_h2[1] < 128 else ((cal_h2[1] << 8) | cal_h2[0]) - 65536
-    _dig_H3 = cal_h2[2]
-    _dig_H4 = (cal_h2[3] << 4) | (cal_h2[4] & 0x0F) if cal_h2[3] < 128 else ((cal_h2[3] << 4) | (cal_h2[4] & 0x0F)) - 65536
-    _dig_H5 = (cal_h2[5] << 4) | (cal_h2[4] >> 4) if cal_h2[5] < 128 else ((cal_h2[5] << 4) | (cal_h2[4] >> 4)) - 65536
-    _dig_H6 = cal_h2[6] if cal_h2[6] < 128 else cal_h2[6] - 256
-    _t, _h, _p = read_bme280()
+    _t, _p = read_bmp280()
     if _t is not None:
-        BME_OK = True
-        print(f"[BME280] OK  {_t:.1f}C  {_h:.1f}%  {_p:.1f}hPa")
+        BMP_OK = True
+        print(f"[BMP280] OK  {_t:.1f}C  {_p:.1f}hPa")
     else:
-        print("[BME280] SKIP: no data")
+        print("[BMP280] SKIP: no data")
 except Exception as e:
-    print(f"[BME280] ERR: {e}")
+    print(f"[BMP280] ERR: {e}")
 
 # --- BH1750 光照 (I2C, 共用 _bus) ---
 BH_OK = False
@@ -164,7 +147,7 @@ except Exception as e:
 # ===================== 数据共享 =====================
 lock = threading.Lock()
 data = {
-    "temp": None, "humi": None, "press": None, "lux": None,
+    "temp": None, "press": None, "lux": None,
     "dist": None, "pir": 0, "led": 0,
     "ts": "", "event": ""
 }
@@ -185,19 +168,18 @@ def sensor_loop():
 
     with open(CSV_PATH, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["timestamp", "temp_C", "humidity_%", "lux", "distance_cm", "pir_state", "led_state", "event"])
+        writer.writerow(["timestamp", "temp_C", "press_hPa", "lux", "distance_cm", "pir_state", "led_state", "event"])
 
         while True:
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            t, h, p, lux, dist, pir, led_state = None, None, None, None, None, 0, 0
+            t, p, lux, dist, pir, led_state = None, None, None, None, 0, 0
             event = ""
 
-            # BME280
-            if BME_OK:
+            # BMP280
+            if BMP_OK:
                 try:
-                    _t, _h, _p = read_bme280()
+                    _t, _p = read_bmp280()
                     t = round(_t, 1) if _t else None
-                    h = round(_h, 1) if _h else None
                     p = round(_p, 1) if _p else None
                 except: pass
 
@@ -234,11 +216,11 @@ def sensor_loop():
                 except: pass
 
             with lock:
-                data.update(temp=t, humi=h, press=p, lux=lux, dist=dist, pir=pir, led=led_state, ts=ts, event=event)
+                data.update(temp=t, press=p, lux=lux, dist=dist, pir=pir, led=led_state, ts=ts, event=event)
 
             # CSV
             try:
-                writer.writerow([ts, t, h, lux, dist, pir, led_state, event])
+                writer.writerow([ts, t, p, lux, dist, pir, led_state, event])
                 f.flush()
             except: pass
 
@@ -329,7 +311,7 @@ def api_data():
 if __name__ == "__main__":
     print("=" * 50)
     print("  传感与测量 多传感器监测 (Web版)")
-    print(f"  BME280:   {'OK' if BME_OK else 'FAIL'}")
+    print(f"  BMP280:   {'OK' if BMP_OK else 'FAIL'}")
     print(f"  BH1750:   {'OK' if BH_OK else 'FAIL'}")
     print(f"  HC-SR04:  {'OK' if SR04_OK else 'FAIL'}")
     print(f"  PIR:      {'OK' if PIR_OK else 'FAIL'}")
