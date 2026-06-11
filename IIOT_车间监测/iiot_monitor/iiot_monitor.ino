@@ -39,7 +39,7 @@ const char* MQTT_CLIENT = "ESP32_Workshop";
 // 阈值
 #define PRESSURE_DELTA_THRESH  3.0   // 气压骤变阈值 (hPa)
 #define LIGHT_THRESHOLD        50    // 光照阈值 (lux)
-#define DISTANCE_THRESHOLD     50    // 人员探测距离 (cm)
+#define DISTANCE_THRESHOLD     4     // 人员探测距离 (cm)
 
 // 常量
 #define SAMPLE_MS      1000
@@ -144,7 +144,8 @@ void updateOLED(float p, float l, float d, bool person) {
   display.setTextSize(2);
   display.setCursor(0, 40);
   display.print(systemStatus == "alert" ? "!!ALERT!!" :
-                (systemStatus == "pressure" ? "PRESSURE" : "NORMAL"));
+                (systemStatus == "pressure" ? "PRESSURE" :
+                (systemStatus == "person" ? "PERSON" : "NORMAL")));
   display.display();
 }
 
@@ -238,10 +239,21 @@ void loop() {
       systemStatus = "pressure";
       motorOn();
       Serial.printf("[PRESSURE] delta=%.1f hPa → fan ON\n", delta);
-    } else if (delta <= PRESSURE_DELTA_THRESH && systemStatus == "pressure") {
+    }
+
+    // --- 人员靠近开风扇 ---
+    if (personPresent && !fanRunning && systemStatus == "normal") {
+      systemStatus = "person";
+      motorOn();
+      Serial.println("[PERSON] 有人靠近 → fan ON");
+    }
+
+    // --- 关风扇: 气压正常 且 人已离开 ---
+    bool pressureNormal = (delta <= PRESSURE_DELTA_THRESH);
+    if (fanRunning && pressureNormal && !personPresent) {
       systemStatus = "normal";
       motorOff();
-      Serial.println("[PRESSURE] 恢复正常 → fan OFF");
+      Serial.println("[AUTO] 恢复正常 → fan OFF");
     }
 
     // --- 照明联动 ---
