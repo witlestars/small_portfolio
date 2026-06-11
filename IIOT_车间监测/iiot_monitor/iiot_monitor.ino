@@ -18,9 +18,9 @@
 #include <Adafruit_BMP280.h>
 
 // ===================== 配置区 =====================
-const char* WIFI_SSID   = "你的WiFi名";
-const char* WIFI_PASS   = "你的WiFi密码";
-const char* MQTT_BROKER = "192.168.1.100";  // PC IP
+const char* WIFI_SSID   = "Pura 70 Pro+";
+const char* WIFI_PASS   = "0866031168";
+const char* MQTT_BROKER = "192.168.43.8";  // PC IP
 const int   MQTT_PORT   = 1883;
 const char* MQTT_CLIENT = "ESP32_Workshop";
 // =================================================
@@ -176,7 +176,7 @@ void setup() {
 
   // BMP280
   if (bmp.begin(BMP280_ADDR)) {
-    bmp.setSampling(Adafruit_BMP280::MODE_FORCED,
+    bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,
                     Adafruit_BMP280::SAMPLING_X1,
                     Adafruit_BMP280::SAMPLING_X1,
                     Adafruit_BMP280::FILTER_OFF);
@@ -225,7 +225,7 @@ void loop() {
     float distance = readHCSR04();
 
     if (isnan(pressure)) pressure = basePressure;
-    if (lux < 0) lux = 0;
+    if (isnan(lux) || lux < 0) lux = 0;
 
     // --- 人员探测 ---
     bool personNow = (distance > 0 && distance < DISTANCE_THRESHOLD);
