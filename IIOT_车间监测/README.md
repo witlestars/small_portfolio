@@ -10,7 +10,7 @@
 - BH1750 光照传感器 x1 (I2C 0x23)
 - HC-SR04 超声波测距模块 x1 (人员探测)
 - OLED SSD1306 0.96寸 x1 (I2C 0x3C)
-- 有源蜂鸣器 3.3V x1
+- LED 3mm/5mm x1 + 220Ω电阻 x1
 - 130直流电机 + 桨叶 + TB6612驱动 x1 (排风扇)
 - 面包板 + 杜邦线若干
 
@@ -21,7 +21,7 @@
 | BH1750 | VCC,GND,SDA,SCL | 3.3V,GND,GPIO38,GPIO37 | I2C 0x23，与BMP280并接 |
 | OLED | VCC,GND,SDA,SCL | 3.3V,GND,GPIO38,GPIO37 | I2C 0x3C |
 | HC-SR04 | VCC,GND,Trig,Echo | 5V,GND,GPIO4,GPIO5 | |
-| 蜂鸣器 | +,- | GPIO6,GND | 有源 |
+| LED | +(长脚),-(短脚) | GPIO6→[220Ω]→LED+, LED-→GND | 告警快闪/照明指示 |
 | TB6612 | PWMA,STBY,AIN1,AIN2,VM,VCC,GND | GPIO7,GPIO15,3.3V,GND,5V,3.3V,GND | 驱动130电机 |
 | 130电机 | +/- | TB6612 AO1/AO2 | 桨叶当排风扇 |
 
@@ -43,7 +43,7 @@
          │                                   │
    D4 ───┼── HC-SR04 Trig                   │
    D5 ───┼── HC-SR04 Echo                   │
-   D6 ───┼── 蜂鸣器 +                       │
+   D6 ───┼── LED +                       │
    D7 ───┼── TB6612 PWMA (PWM)              │
    D15 ──┼── TB6612 STBY (使能)             │
          └──────────────────────────────────┘

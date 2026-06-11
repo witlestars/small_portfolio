@@ -2,7 +2,7 @@
  * ============================================================
  *  IIOT 课程设计 — 车间智能通风与照明系统
  *  硬件: ESP32-S3 + BMP280(气压) + BH1750(光照) + HC-SR04(人员探测)
- *       + OLED SSD1306 + 蜂鸣器 + 130电机(排风扇, L9110S直驱)
+ *       + OLED SSD1306 + LED + 130电机(排风扇, TB6612直驱)
  *  通信: WiFi + MQTT 双向 (Mosquitto Broker)
  *  仪表盘: PC端 Python Flask + ECharts (iiot_dashboard.py)
  * ============================================================
@@ -28,7 +28,7 @@ const char* MQTT_CLIENT = "ESP32_Workshop";
 // 引脚定义 (DNESP32S3M 小系统板)
 #define TRIG_PIN     4    // HC-SR04 Trig
 #define ECHO_PIN     5    // HC-SR04 Echo
-#define BUZZER_PIN   6    // 蜂鸣器 +
+#define LED_PIN      6    // LED 指示灯
 #define MOTOR_PWM    7    // TB6612 PWMA (PWM调速)
 #define MOTOR_STBY   15   // TB6612 STBY (HIGH=运行)
 
@@ -150,11 +150,13 @@ void updateOLED(float p, float l, float d, bool person) {
 
 // ===================== 告警 =====================
 void triggerAlert(const char* reason) {
-  digitalWrite(BUZZER_PIN, HIGH);
   systemStatus = "alert";
   Serial.printf("\n!!! ALERT: %s !!!\n", reason);
-  delay(1500);
-  digitalWrite(BUZZER_PIN, LOW);
+  for (int i = 0; i < 6; i++) {  // LED 快闪3次
+    digitalWrite(LED_PIN, !digitalRead(LED_PIN));
+    delay(250);
+  }
+  digitalWrite(LED_PIN, LOW);
 }
 
 // ===================== SETUP =====================
@@ -163,11 +165,11 @@ void setup() {
 
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
-  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(LED_PIN, OUTPUT);
   pinMode(MOTOR_PWM, OUTPUT);
   pinMode(MOTOR_STBY, OUTPUT);
 
-  digitalWrite(BUZZER_PIN, LOW);
+  digitalWrite(LED_PIN, LOW);
   motorOff();
 
   Wire.begin(38, 37);  // DNESP32S3M: SDA=38, SCL=37
@@ -244,9 +246,10 @@ void loop() {
 
     // --- 照明联动 ---
     if (personPresent && lux < LIGHT_THRESHOLD && systemStatus == "normal") {
-      digitalWrite(BUZZER_PIN, HIGH); delay(200);
-      digitalWrite(BUZZER_PIN, LOW);
-      Serial.println("[LIGHT] 有人+光线不足→需开灯");
+      digitalWrite(LED_PIN, HIGH);
+      Serial.println("[LIGHT] 有人+光线不足→LED亮");
+    } else if (!(personPresent && lux < LIGHT_THRESHOLD)) {
+      digitalWrite(LED_PIN, LOW);
     }
 
     // 慢速更新气压基准
