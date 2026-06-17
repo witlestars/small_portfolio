@@ -56,6 +56,7 @@ PubSubClient mqtt(espClient);
 // 状态
 unsigned long lastSample = 0;
 bool fanRunning = false;
+bool manualOverride = false;
 float basePressure = 1013.0;
 unsigned long pressureCalibratedAt = 0;
 String systemStatus = "normal";
@@ -95,8 +96,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int len) {
   Serial.println("MQTT RX [" + String(topic) + "]: " + msg);
 
   if (String(topic) == "cmd/relay" || String(topic) == "cmd/fan") {
-    if (msg == "ON")  motorOn();
-    if (msg == "OFF") motorOff();
+    if (msg == "ON")  { manualOverride = true; motorOn();  }
+    if (msg == "OFF") { manualOverride = false; motorOff(); }
   }
 }
 
@@ -139,7 +140,7 @@ void updateOLED(float p, float l, float d, bool person) {
   display.printf("D:%.0fcm %s", d, person ? "有人" : "无人");
 
   display.setCursor(0, 24);
-  display.printf("Fan:%s", fanRunning ? "ON " : "OFF");
+  display.printf("Fan:%s%s", fanRunning ? "ON " : "OFF", manualOverride ? " M" : "");
 
   display.setTextSize(2);
   display.setCursor(0, 40);
@@ -248,19 +249,18 @@ void loop() {
       Serial.println("[PERSON] 有人靠近 → fan ON");
     }
 
-    // --- 关风扇: 气压正常 且 人已离开 ---
+    // --- 关风扇: 气压正常 且 人已离开 且 非手动模式 ---
     bool pressureNormal = (delta <= PRESSURE_DELTA_THRESH);
-    if (fanRunning && pressureNormal && !personPresent) {
+    if (fanRunning && pressureNormal && !personPresent && !manualOverride) {
       systemStatus = "normal";
       motorOff();
       Serial.println("[AUTO] 恢复正常 → fan OFF");
     }
 
     // --- 照明联动 ---
-    if (personPresent && lux < LIGHT_THRESHOLD && systemStatus == "normal") {
+    if (personPresent && lux < LIGHT_THRESHOLD) {
       digitalWrite(LED_PIN, HIGH);
-      Serial.println("[LIGHT] 有人+光线不足→LED亮");
-    } else if (!(personPresent && lux < LIGHT_THRESHOLD)) {
+    } else {
       digitalWrite(LED_PIN, LOW);
     }
 
@@ -277,6 +277,7 @@ void loop() {
     doc["distance"] = (int)distance;
     doc["person"]   = personPresent;
     doc["fan"]      = fanRunning;
+    doc["manual"]   = manualOverride;
     doc["status"]   = systemStatus;
     String json;
     serializeJson(doc, json);
