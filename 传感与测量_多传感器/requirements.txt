@@ -1,6 +1,0 @@
-adafruit-circuitpython-dht
-adafruit-blinka
-smbus2
-RPi.GPIO
-picamera2
-flask

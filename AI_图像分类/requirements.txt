@@ -1,5 +1,0 @@
-flask
-picamera2
-numpy
-Pillow
-onnxruntime
